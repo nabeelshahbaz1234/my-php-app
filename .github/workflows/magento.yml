@@ -1,4 +1,4 @@
-name: Magento Install
+name: Magento Install CI
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
     branches: [ main ]
 
 jobs:
-  build:
+  install-magento:
     runs-on: ubuntu-latest
 
     services:
@@ -18,17 +18,37 @@ jobs:
           MYSQL_DATABASE: magento
         ports:
           - 3306:3306
-        options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=3
+        options: >-
+          --health-cmd="mysqladmin ping --silent"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=3
+
+      opensearch:
+        image: opensearchproject/opensearch:2.11.1
+        env:
+          discovery.type: single-node
+          plugins.security.disabled: "true"
+          bootstrap.memory_lock: "true"
+          OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+        ports:
+          - 9200:9200
+        options: >-
+          --health-cmd="curl -f http://localhost:9200 || exit 1"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
 
     steps:
-    - name: Checkout Code
+    - name: Checkout repository
       uses: actions/checkout@v3
 
-    - name: Setup PHP
+    - name: Set up PHP
       uses: shivammathur/setup-php@v2
       with:
         php-version: 8.1
         extensions: mbstring, intl, bcmath, gd, pdo_mysql, soap, xsl, zip
+        ini-values: memory_limit=2G
 
     - name: Install Composer
       run: |
@@ -39,11 +59,15 @@ jobs:
       env:
         COMPOSER_AUTH: ${{ secrets.COMPOSER_AUTH }}
       run: |
+        mkdir -p ~/.composer
         echo "$COMPOSER_AUTH" > ~/.composer/auth.json
+
+    - name: Install Magento via Composer
+      run: |
+        composer create-project --repository=https://repo.magento.com/ magento/project-community-edition=2.4.6 magento
 
     - name: Install Magento
       run: |
-        composer create-project --repository=https://repo.magento.com/ magento/project-community-edition=2.4.6 magento
         cd magento
         bin/magento setup:install \
           --base-url=http://localhost \
@@ -60,9 +84,12 @@ jobs:
           --language=en_US \
           --currency=USD \
           --timezone=America/Chicago \
-          --use-rewrites=1
+          --use-rewrites=1 \
+          --search-engine=opensearch \
+          --opensearch-host=localhost \
+          --opensearch-port=9200
 
-    - name: Check Magento status
+    - name: Show admin URL
       run: |
         cd magento
         bin/magento info:adminuri
