@@ -1,32 +1,68 @@
-name: CI
+name: Magento Install
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ main ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ main ]
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
+    services:
+      mysql:
+        image: mysql:5.7
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: root
+        ports:
+          - 3306:3306
+        options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=3
+
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+    - name: Checkout Code
+      uses: actions/checkout@v3
 
-      - name: Set up PHP
-        uses: shivammathur/setup-php@v2
-        with:
-          php-version: '8.2'
+    - name: Setup PHP
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: 8.1
+        extensions: mbstring, intl, bcmath, gd, pdo_mysql, soap, xsl, zip
 
-      - name: Install dependencies
-        run: composer install
+    - name: Install Composer
+      run: |
+        php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
+        php composer-setup.php --install-dir=/usr/local/bin --filename=composer
 
-      # Comment this if you don't have tests yet
-      - name: Run PHPUnit
-        run: |
-          if [ -f ./vendor/bin/phpunit ]; then
-            ./vendor/bin/phpunit --no-configuration || true
-          else
-            echo "PHPUnit not found"
-          fi
+    - name: Authenticate Composer (Magento Marketplace)
+      env:
+        COMPOSER_AUTH: ${{ secrets.COMPOSER_AUTH }}
+      run: |
+        echo "$COMPOSER_AUTH" > ~/.composer/auth.json
+
+    - name: Install Magento
+      run: |
+        composer create-project --repository=https://repo.magento.com/ magento/project-community-edition=2.4.6 magento
+        cd magento
+        bin/magento setup:install \
+          --base-url=http://localhost \
+          --db-host=127.0.0.1 \
+          --db-name=magento \
+          --db-user=root \
+          --db-password=root \
+          --admin-firstname=Admin \
+          --admin-lastname=User \
+          --admin-email=admin@example.com \
+          --admin-user=admin \
+          --admin-password=admin123 \
+          --backend-frontname=admin \
+          --language=en_US \
+          --currency=USD \
+          --timezone=America/Chicago \
+          --use-rewrites=1
+
+    - name: Check Magento status
+      run: |
+        cd magento
+        bin/magento info:adminuri
